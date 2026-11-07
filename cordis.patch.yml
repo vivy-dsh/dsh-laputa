@@ -1,0 +1,21 @@
+# cordis.patch.yml — bundle overlay for dsh-laputa.
+#
+# Phase 1 injects a user-authored persona into the system prompt and guides an
+# empty persona through first-run setup. The bundle mounts disabled by default;
+# `npm run setup:laputa -- --init <personaId>` writes an id-targeted entry in
+# the project profile that enables the plugin and selects the persona. The empty
+# template is filled by the conversation through the create-only laputa_init
+# tool, by the same-level web panel, or by editing the Markdown files directly.
+# The panel edits content only; this profile entry still controls whether the
+# persona is injected.
+- insert:
+    - id: laputa
+      name: dsh-laputa
+      config:
+        enabled: false
+        personaId: default
+        # sourceDir: /absolute/path/to/persona   # defaults to $DSH_HOME/laputa/<personaId>
+        # stateDir: /absolute/path/to/revision-state   # defaults to $DSH_HOME/laputa/.state/<personaId>
+        # maxSourceBytes: 65536
+        # maxPersonaChars: 24000
+        # retainRevisions: 0   # 0 = 保留全部版本；N = 保留最近 N 个版本（含新版本）
