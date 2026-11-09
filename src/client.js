@@ -470,7 +470,7 @@ window.__ModuleLoader__.load({
         if (status === undefined) {
           initBody.push(h('p', { className: 'lp-empty', key: 'empty' }, '尚未读取到人格状态。'))
         } else if (!enabled) {
-          initBody.push(h('p', { className: 'lp-note', key: 'disabled' }, '插件当前未启用：内容仍可编辑，但保存后不会注入提示词。启用或切换人格请使用 npm run setup:laputa。'))
+          initBody.push(h('p', { className: 'lp-note', key: 'disabled' }, '插件当前未启用：内容仍可编辑，但保存后不会注入提示词。可在设置 → 人格中重新启用；切换人格使用 npm run setup:laputa。'))
         }
         if (status !== undefined && initialized) {
           initBody.push(h('p', { className: 'lp-note', key: 'ok' }, hasStore
@@ -722,9 +722,78 @@ window.__ModuleLoader__.load({
           notice ? h('div', { className: 'lp-toast', role: 'status' }, notice) : null))
     }
 
+    function PersonaSettings() {
+      const [enabled, setEnabled] = useState(undefined)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      const [notice, setNotice] = useState('')
+      const mounted = useRef(false)
+      const pending = useRef(false)
+      const load = useCallback(() => {
+        setError('')
+        api('/status').then(data => {
+          if (mounted.current) setEnabled(data.status.enabled)
+        }).catch(cause => { if (mounted.current) setError(cause.message) })
+      }, [])
+      useEffect(() => {
+        mounted.current = true
+        load()
+        return () => { mounted.current = false }
+      }, [load])
+      async function toggle() {
+        if (pending.current || enabled === undefined) return
+        pending.current = true
+        setBusy(true)
+        setError('')
+        setNotice('')
+        try {
+          const data = await api('/enabled', { method: 'POST', body: JSON.stringify({ enabled: !enabled }) })
+          if (mounted.current) {
+            setEnabled(data.enabled)
+            setNotice(data.enabled ? '人格已启用，下次请求生效。' : '人格已关闭，文件与版本历史已保留。')
+          }
+        } catch (cause) {
+          if (mounted.current) setError(cause.message)
+        } finally {
+          pending.current = false
+          if (mounted.current) setBusy(false)
+        }
+      }
+      return h('section', { className: 'laputa-settings', 'aria-busy': busy },
+        h('style', null, `
+          .laputa-settings{padding:24px;color:var(--dsw-alias-label-primary);max-width:720px}
+          .laputa-settings h2{margin:0 0 20px;font-size:18px}
+          .laputa-settings-row{display:flex;align-items:center;justify-content:space-between;gap:24px}
+          .laputa-settings-label{font-size:14px;font-weight:600}
+          .laputa-settings p{font-size:13px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin:6px 0 0}
+          .laputa-settings-switch{appearance:none;position:relative;flex:none;width:38px;height:22px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);cursor:pointer}
+          .laputa-settings-switch::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-label-secondary)}
+          .laputa-settings-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
+          .laputa-settings-switch[aria-checked="true"]::after{left:19px;background:white}
+          .laputa-settings-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
+          .laputa-settings-switch:disabled{opacity:.5;cursor:default}
+          .laputa-settings [role="alert"]{color:var(--dsw-alias-status-error, #b42318);margin-top:16px}
+          .laputa-settings [role="status"]{margin-top:16px}
+        `),
+        h('h2', null, '人格'),
+        h('div', { className: 'laputa-settings-row' },
+          h('div', null,
+            h('span', { id: 'laputa-enabled-label', className: 'laputa-settings-label' }, '启用人格'),
+            h('p', { id: 'laputa-enabled-description' }, '注入人格文档，未初始化时提供填写引导。关闭后保留文件与版本历史。')),
+          h('button', { type: 'button', role: 'switch', className: 'laputa-settings-switch',
+            'aria-labelledby': 'laputa-enabled-label', 'aria-describedby': 'laputa-enabled-description',
+            'aria-checked': enabled === true, disabled: busy || enabled === undefined, onClick: toggle })),
+        h('p', null, enabled === undefined ? '正在读取人格状态…' : '设置自动保存，重启后保留；下次请求生效，进行中的回复不受影响。'),
+        error ? h('div', { role: 'alert' }, error, ' ', h('button', { type: 'button', onClick: enabled === undefined ? load : toggle, disabled: busy }, '重试')) : null,
+        notice ? h('p', { role: 'status' }, notice) : null)
+    }
+
     return {
       inject: ['slots'],
       apply(ctx) {
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section', id: 'laputa', order: 6, label: () => '人格', inject: () => ({}),
+        }, PersonaSettings))
         ctx.slots.inject('main', () => ctx.slots.register(
           { name: 'main', key: 'laputa', inject: () => ({}) }, LaputaPanel,
         ))

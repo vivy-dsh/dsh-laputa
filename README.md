@@ -89,8 +89,11 @@ voice, memory, and mempalace, under the label **人格**.
 - Blanking `IDENTITY.MD` or `MISSION.MD` is allowed after a confirmation. The
   draft returns to guided setup and cannot be published until refilled; the
   live revision and running sessions are unchanged.
-- The panel never changes the profile, so enabling the plugin or switching
-  personas still uses `npm run setup:laputa`.
+- **Settings → 人格 → 启用人格** enables or disables injection and guided setup.
+  The host config editor saves the choice and reloads the plugin. It survives
+  restarts and takes effect on the next request; an in-progress response is
+  unchanged. Files and revision history are retained. Switching personas still
+  uses `npm run setup:laputa`.
 - The API is loopback-only, same-origin, requires the DSH session check, and
   only accepts the six known file names. It never accepts a path.
 

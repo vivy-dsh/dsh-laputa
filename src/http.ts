@@ -51,6 +51,15 @@ export interface PersonaFileDetail {
 
 type FileDetails = Record<PersonaFile, PersonaFileDetail>
 
+interface ConfigEntry {
+  readonly options: { readonly id?: string }
+}
+
+interface PersonaConfigEditor {
+  entries(): ConfigEntry[]
+  edit(entry: ConfigEntry, update: (current: Record<string, unknown> | undefined) => Record<string, unknown>): Promise<unknown>
+}
+
 function send(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -231,6 +240,36 @@ export function registerLaputaPanel(ctx: Context, cache: PersonaCache): () => vo
 
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       try {
+        if (url.pathname === `${PANEL_PREFIX}/enabled` && req.method === 'POST') {
+          if (req.headers.origin === undefined) {
+            failure(res, 403, 'ORIGIN_REJECTED', '缺少同源请求信息', '在 DSH 设置面板内重试')
+            return
+          }
+          if (!requireJson(req)) {
+            failure(res, 415, 'JSON_REQUIRED', '请求必须使用 JSON', '刷新页面后重试')
+            return
+          }
+          const parsed = await readBody(req, 4096)
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)
+            || typeof (parsed as Record<string, unknown>).enabled !== 'boolean'
+            || Object.keys(parsed).some(key => key !== 'enabled')) {
+            failure(res, 400, 'INVALID_REQUEST', '只允许设置 enabled 布尔值', '刷新页面后重试')
+            return
+          }
+          const editor = ctx.get('configEditor') as PersonaConfigEditor | undefined
+          const entry = editor?.entries().find(item => item.options.id === 'laputa')
+          if (editor === undefined || entry === undefined) {
+            failure(res, 503, 'CONFIG_UNAVAILABLE', '人格配置暂不可修改', '检查 DSH 配置服务后重试')
+            return
+          }
+          const enabled = (parsed as { enabled: boolean }).enabled
+          // The host persists, validates and reloads the entry, disposing its
+          // scoped prompt sections and tools when injection is turned off.
+          await editor.edit(entry, current => ({ ...current, enabled }))
+          send(res, 200, { ok: true, enabled })
+          return
+        }
+
         if (url.pathname === `${PANEL_PREFIX}/status` && req.method === 'GET') {
           send(res, 200, { ok: true, ...payload(cache) })
           return

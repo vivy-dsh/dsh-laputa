@@ -63,10 +63,12 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => unknown
 function harness(cache: PersonaCache, options: {
   connection?: boolean
   reject?: unknown
+  configEditor?: unknown
 } = {}) {
   let handler: Handler | undefined
   const ctx = {
     get: (key: string) => {
+      if (key === 'configEditor') return options.configEditor
       if (key === 'webServer') {
         return {
           register(route: { handler: Handler }) {
@@ -123,6 +125,50 @@ afterEach(() => {
 })
 
 describe('panel HTTP API', () => {
+  it('persists the enabled switch through the host editor without changing persona configuration or files', async () => {
+    const { cache, directory } = fixture()
+    const entry = { options: { id: 'laputa' } }
+    let config = { enabled: true, personaId: 'vivy', retainRevisions: 12 }
+    const editor = {
+      entries: () => [entry],
+      edit: async (target: unknown, update: (current: typeof config) => typeof config) => {
+        expect(target).toBe(entry)
+        config = update(config)
+      },
+    }
+    const { call } = harness(cache, { configEditor: editor })
+    for (const enabled of [false, true]) {
+      const reply = await call('POST', '/enabled', { enabled }, { origin: 'http://127.0.0.1:3082' })
+      expect(reply.status).toBe(200)
+      expect(reply.body.enabled).toBe(enabled)
+      expect(config).toEqual({ enabled, personaId: 'vivy', retainRevisions: 12 })
+      expect(readFileSync(join(directory, 'IDENTITY.MD'), 'utf8')).toBe('identity')
+    }
+  })
+
+  it('refuses invalid enabled values and foreign configuration fields', async () => {
+    const { cache } = fixture()
+    const { call } = harness(cache)
+    for (const body of [{ enabled: 'false' }, {}, { enabled: false, sourceDir: '/other' }]) {
+      const reply = await call('POST', '/enabled', body, { origin: 'http://127.0.0.1:3082' })
+      expect(reply.status).toBe(400)
+    }
+  })
+
+  it('requires a same-origin authenticated request for the enabled switch', async () => {
+    const { cache } = fixture()
+    expect((await harness(cache).call('POST', '/enabled', { enabled: false })).status).toBe(403)
+    expect((await harness(cache).call('POST', '/enabled', { enabled: false }, { origin: 'https://example.com' })).status).toBe(403)
+    expect((await harness(cache, { reject: 401 }).call('POST', '/enabled', { enabled: false }, { origin: 'http://127.0.0.1:3082' })).status).toBe(401)
+  })
+
+  it('reports that switching is unavailable when the host config editor is missing', async () => {
+    const { cache } = fixture()
+    const reply = await harness(cache).call('POST', '/enabled', { enabled: false }, { origin: 'http://127.0.0.1:3082' })
+    expect(reply.status).toBe(503)
+    expect(reply.body.code).toBe('CONFIG_UNAVAILABLE')
+  })
+
   it('returns status and file details', async () => {
     const { cache } = fixture()
     const { call } = harness(cache)
