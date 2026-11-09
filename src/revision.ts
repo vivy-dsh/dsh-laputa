@@ -537,7 +537,7 @@ export class RevisionStore {
     }
     if (info.isSymbolicLink()) throw corrupt('revision state directory is a symlink')
     if (!info.isDirectory()) throw corrupt('revision state directory is not a directory')
-    if ((info.mode & 0o002) !== 0) throw corrupt('revision state directory is world-writable')
+    if (process.platform !== 'win32' && (info.mode & 0o002) !== 0) throw corrupt('revision state directory is world-writable')
     return true
   }
 

@@ -3,9 +3,9 @@
  * symlinks, world-writable files, and aliased or non-regular files; cap each
  * file in bytes; and fail on invalid UTF-8 instead of replacing bytes.
  *
- * POSIX exposes the permission and link-count checks directly. On Windows the
- * mode bits and link count are synthesized by the runtime, so those two checks
- * are best-effort there; symlink and regularity checks still apply.
+ * POSIX exposes permission bits directly. Windows synthesizes these bits from
+ * the read-only attribute, so the world-writable check only applies on POSIX.
+ * Symlink, hardlink and regularity checks still apply on both platforms.
  * @module dsh-laputa
  */
 
@@ -55,7 +55,7 @@ export function readPersonaDirectory(directory: string): string {
   if (!info.isDirectory()) {
     throw new PersonaError('persona_directory_missing', `persona path is not a directory: ${directory}`)
   }
-  if ((info.mode & 0o002) !== 0) {
+  if (process.platform !== 'win32' && (info.mode & 0o002) !== 0) {
     throw new PersonaError('world_writable_file_refused', `persona directory is world-writable: ${directory}`)
   }
   return realpathSync(directory)
@@ -99,7 +99,7 @@ export function safeRead(path: string, limit: number, optional: boolean): SafeRe
 
   try {
     const info = fstatSync(fd)
-    if ((info.mode & 0o002) !== 0) {
+    if (process.platform !== 'win32' && (info.mode & 0o002) !== 0) {
       throw new PersonaError('world_writable_file_refused', `persona file is world-writable: ${path}`)
     }
     if (!info.isFile() || info.nlink !== 1) {

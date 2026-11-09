@@ -116,7 +116,7 @@ function targetState(path: string, limit: number): TargetState {
   if (!info.isFile() || info.nlink !== 1) {
     throw new PersonaError('not_an_unaliased_regular_file', `persona file is not an unaliased regular file: ${path}`)
   }
-  if ((info.mode & 0o002) !== 0) {
+  if (process.platform !== 'win32' && (info.mode & 0o002) !== 0) {
     throw new PersonaError('world_writable_file_refused', `persona file is world-writable: ${path}`)
   }
   if (info.size === 0) {
