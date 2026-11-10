@@ -8,8 +8,8 @@
  * instructions instead and exposes `laputa_init`, a create-only tool that
  * fills missing files and never overwrites user content. It also serves the
  * loopback API used by the same-level web panel. It does not change tool
- * permissions. Automatic proposals, rewrites, and rollback belong to a later
- * phase.
+ * permissions. Evolution may stage immutable proposals; only an authenticated
+ * human panel decision can publish them after checking the live and draft base.
  * @module dsh-laputa
  */
 
@@ -18,6 +18,7 @@ import z from '@deepseek-ai/schemastery'
 import { registerPersonaInjection } from './adapter.ts'
 import { resolvePersonaBinding } from './binding.ts'
 import { PersonaCache } from './cache.ts'
+import { PersonaCandidates } from './candidates.ts'
 import { registerLaputaCommand, type CommandsCapability } from './command.ts'
 import { DEFAULT_MAX_PERSONA_CHARS, DEFAULT_MAX_SOURCE_BYTES } from './domain.ts'
 import { registerLaputaPanel } from './http.ts'
@@ -85,6 +86,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   const revisions = enabled ? new RevisionStore(binding, binding.stateDirectory, limits) : undefined
   const cache = new PersonaCache(binding, limits, warn, revisions)
+  const candidates = new PersonaCandidates(cache)
 
   if (enabled) {
     const outcome = cache.load()
@@ -112,6 +114,14 @@ export function apply(ctx: Context, config: Config): void {
   // The panel API activates only when the host provides both services. Its
   // absence never blocks the persona reader, so headless startup still works.
   ctx.inject(['webServer', 'connection'], (scope) => {
-    scope.effect(() => registerLaputaPanel(scope, cache), 'laputa: panel api')
+    scope.effect(() => registerLaputaPanel(scope, cache, candidates), 'laputa: panel api')
+  })
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(async () => {
+      if (!process.env.DSH_HOME) return
+      const moduleName = 'dsh-laputa/internal'
+      const { registerLaputaInternal } = await import(moduleName)
+      return registerLaputaInternal({ webServer: scope.get('webServer') }, candidates)
+    }, 'laputa: internal proposals')
   })
 }

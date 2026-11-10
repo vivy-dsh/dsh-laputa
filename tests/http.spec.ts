@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolvePersonaBinding, type PersonaBinding } from '../src/binding.ts'
 import { PersonaCache, type PersonaLimits } from '../src/cache.ts'
+import { PersonaCandidates } from '../src/candidates.ts'
 import { PANEL_PREFIX, registerLaputaPanel } from '../src/http.ts'
 import { readPersonaDraft, RevisionStore } from '../src/revision.ts'
 import { removeDir, tempDir, writePersona } from './helpers.ts'
@@ -125,6 +126,27 @@ afterEach(() => {
 })
 
 describe('panel HTTP API', () => {
+  it('requires authenticated same-origin explicit review before approving an immutable candidate', async () => {
+    const { cache, store } = storeFixture()
+    const owner = new PersonaCandidates(cache)
+    const baseline = owner.baseline()
+    const candidate = owner.stage({ ticketId: 'ticket-1', subjectId: 'subject-1', evidenceIds: ['event-1'],
+      summary: 'Clearer identity', files: { 'IDENTITY.MD': 'reviewed identity' },
+      expectedBaseRevision: baseline.revision!, expectedDraftDigest: baseline.draftDigest })
+    const body = { candidateId: candidate.candidateId, candidateDigest: candidate.candidateDigest, action: 'approve', confirm: true }
+    const valid = harness(cache)
+    expect((await valid.call('GET', '/candidates')).body.candidates).toHaveLength(1)
+    expect((await valid.call('GET', `/candidate?id=${candidate.candidateId}`)).body.candidate.diff.files).toHaveLength(6)
+    expect((await valid.call('POST', '/candidate/decide', body)).status).toBe(403)
+    const origin = { origin: 'http://127.0.0.1:3082' }
+    expect((await harness(cache, { reject: 401 }).call('POST', '/candidate/decide', body, origin)).status).toBe(401)
+    expect((await valid.call('POST', '/candidate/decide', { ...body, confirm: false }, origin)).status).toBe(400)
+    expect((await valid.call('POST', '/candidate/decide', body, { origin: 'http://foreign.example' })).status).toBe(403)
+    expect(store.loadCurrent()?.revision).toBe(1)
+    const approved = await valid.call('POST', '/candidate/decide', body, origin)
+    expect(approved.status).toBe(200)
+    expect(approved.body.candidate).toMatchObject({ status: 'approved', ownerRef: { revision: 2 } })
+  })
   it('persists the enabled switch through the host editor without changing persona configuration or files', async () => {
     const { cache, directory } = fixture()
     const entry = { options: { id: 'laputa' } }

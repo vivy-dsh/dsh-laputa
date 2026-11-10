@@ -24,6 +24,7 @@
     }
   },
   "exports": {
+    "./internal": "./internal.mjs",
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/types/index.js"
@@ -33,6 +34,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "internal.mjs",
     "cordis.patch.yml",
     "lib/types/**/*",
     "src/client.js"

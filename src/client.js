@@ -150,6 +150,64 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function PersonaCandidates() {
+      const [items, setItems] = useState(null)
+      const [detail, setDetail] = useState(null)
+      const [error, setError] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [confirmed, setConfirmed] = useState(false)
+      const refresh = async () => {
+        setBusy(true); setError('')
+        try { setItems((await api('/candidates')).candidates) }
+        catch (err) { setError(err.message) }
+        finally { setBusy(false) }
+      }
+      useEffect(() => { void refresh() }, [])
+      const select = async item => {
+        setBusy(true); setError(''); setConfirmed(false)
+        try { setDetail((await api(`/candidate?id=${encodeURIComponent(item.candidateId)}`)).candidate) }
+        catch (err) { setError(err.message) }
+        finally { setBusy(false) }
+      }
+      const decide = async action => {
+        setBusy(true); setError('')
+        try {
+          const result = await api('/candidate/decide', { method: 'POST', body: JSON.stringify({
+            candidateId: detail.candidateId, candidateDigest: detail.candidateDigest, action, confirm: true,
+          }) })
+          setDetail({ ...detail, ...result.candidate }); setConfirmed(false)
+          setItems(items.map(item => item.candidateId === detail.candidateId ? result.candidate : item))
+        } catch (err) { setError(`${err.message}。当前人格或草稿可能已改变，请重新生成提案。`) }
+        finally { setBusy(false) }
+      }
+      return h('div', { className: 'lp-stack' },
+        h('section', { className: 'lp-card' }, h('div', { className: 'lp-card-title' }, '人格进化提案',
+          h('button', { className: 'lp-btn', disabled: busy, onClick: refresh }, '刷新')),
+        h('p', { className: 'lp-note' }, '审阅来源和差异后确认发布。发布保留现有草稿；已有会话继续使用原版本。'),
+        error ? h('p', { role: 'alert', className: 'lp-inline-error' }, error) : null,
+        items === null ? h('p', null, '正在加载…') : items.length === 0 ? h('p', { className: 'lp-empty' }, '暂无人格提案')
+          : items.map(item => h('button', { key: item.candidateId, className: 'lp-history-row', disabled: busy, onClick: () => select(item) },
+            h('span', null, `r${item.baseRevision}`), h('span', null, item.summary),
+            h('span', null, ({ pending: '待审阅', approved: '已发布', rejected: '已拒绝' })[item.status])))),
+        detail ? h('section', { className: 'lp-card' }, h('h3', { className: 'lp-card-title' }, detail.summary),
+          h('p', { style: { overflowWrap: 'anywhere' } }, `来源工单：${detail.ticketId} · 主体：${detail.subjectId}`),
+          h('details', null, h('summary', null, `独立事实来源（${detail.evidenceIds.length}）`),
+            h('ul', null, detail.evidenceIds.map(id => h('li', { key: id }, id)))),
+          h('p', { className: 'lp-note', style: { overflowWrap: 'anywhere' } }, `提案摘要：${detail.candidateDigest}`),
+          detail.diff.files.filter(file => file.changed).map(file => h('div', { key: file.name }, h('h4', null, file.name),
+            file.truncated ? h('p', null, '差异过长，部分内容已省略。请展开完整内容审阅。') : null,
+            h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, file.hunks.flatMap(hunk => hunk.lines.map(line =>
+              `${line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '} ${line.text}`)).join('\n')),
+            h('details', null, h('summary', null, '完整原文与候选内容'),
+              h('h5', null, '原文'), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, detail.baseFiles[file.name]),
+              h('h5', null, '候选内容'), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, detail.files[file.name])))),
+          detail.status === 'pending' ? h('div', { className: 'lp-actions' },
+            h('label', null, h('input', { type: 'checkbox', checked: confirmed, disabled: busy, onChange: e => setConfirmed(e.target.checked) }), '我已审阅来源和差异，确认此决定'),
+            h('button', { className: 'lp-btn', disabled: busy || !confirmed, onClick: () => decide('approve') }, '批准并发布'),
+            h('button', { className: 'lp-btn', disabled: busy || !confirmed, onClick: () => decide('reject') }, '拒绝提案'))
+            : h('p', null, detail.status === 'approved' ? `已发布 r${detail.ownerRef?.revision}` : '已拒绝，未修改人格')) : null)
+    }
+
     function LaputaPanel() {
       const [tab, setTab] = useState('overview')
       const [snapshot, setSnapshot] = useState(null)
@@ -408,7 +466,7 @@ window.__ModuleLoader__.load({
       ]
 
       const tabs = hasStore
-        ? [['overview', '概览'], ['files', '文件'], ['history', '版本']]
+        ? [['overview', '概览'], ['files', '文件'], ['history', '版本'], ['candidates', '进化提案']]
         : [['overview', '概览'], ['files', '文件']]
 
       const tabbar = h('div', { className: 'lp-tabs', role: 'tablist', 'aria-label': '人格面板导航' },
@@ -718,7 +776,7 @@ window.__ModuleLoader__.load({
             : null),
         tabbar,
         h('div', { className: 'lp-body', role: 'tabpanel' },
-          tab === 'overview' ? overview() : tab === 'files' ? files() : historyView(),
+          tab === 'overview' ? overview() : tab === 'files' ? files() : tab === 'candidates' ? h(PersonaCandidates) : historyView(),
           notice ? h('div', { className: 'lp-toast', role: 'status' }, notice) : null))
     }
 

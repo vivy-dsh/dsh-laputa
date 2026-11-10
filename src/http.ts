@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { inspectPersonaDirectory } from './binding.ts'
 import type { PersonaCache, PersonaStatus } from './cache.ts'
+import { PersonaCandidates } from './candidates.ts'
 import { diffPersonaFiles } from './diff.ts'
 import { ASSEMBLY_FILES, PersonaError, describeError, type PersonaFile } from './domain.ts'
 import { safeRead } from './safe-read.ts'
@@ -204,7 +205,7 @@ function parseRevisionQuery(value: string | null): number | null {
  * @param ctx - child context providing `webServer` and `connection`.
  * @param cache - persona cache backing the panel.
  */
-export function registerLaputaPanel(ctx: Context, cache: PersonaCache): () => void {
+export function registerLaputaPanel(ctx: Context, cache: PersonaCache, candidates = new PersonaCandidates(cache)): () => void {
   const webServer = ctx.get('webServer') as PanelWebServer | undefined
   if (webServer === undefined) return () => {}
 
@@ -240,6 +241,28 @@ export function registerLaputaPanel(ctx: Context, cache: PersonaCache): () => vo
 
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       try {
+        if (url.pathname === `${PANEL_PREFIX}/candidates` && req.method === 'GET') {
+          send(res, 200, { ok: true, candidates: candidates.list() })
+          return
+        }
+        if (url.pathname === `${PANEL_PREFIX}/candidate` && req.method === 'GET') {
+          send(res, 200, { ok: true, candidate: candidates.detail(url.searchParams.get('id') ?? '') })
+          return
+        }
+        if (url.pathname === `${PANEL_PREFIX}/candidate/decide` && req.method === 'POST') {
+          if (!req.headers.origin || !requireJson(req)) {
+            failure(res, 403, 'HUMAN_REVIEW_REQUIRED', '请从已登录的人格面板确认提案', '打开人格提案页审阅差异')
+            return
+          }
+          const body = await readBody(req, 4096) as Record<string, unknown>
+          if (!body || typeof body.candidateId !== 'string' || typeof body.candidateDigest !== 'string'
+            || (body.action !== 'approve' && body.action !== 'reject') || body.confirm !== true) {
+            failure(res, 400, 'INVALID_REQUEST', '需要明确确认并提供提案摘要', '重新审阅提案后确认')
+            return
+          }
+          send(res, 200, { ok: true, candidate: candidates.decide(body.candidateId, body.candidateDigest, body.action) })
+          return
+        }
         if (url.pathname === `${PANEL_PREFIX}/enabled` && req.method === 'POST') {
           if (req.headers.origin === undefined) {
             failure(res, 403, 'ORIGIN_REJECTED', '缺少同源请求信息', '在 DSH 设置面板内重试')

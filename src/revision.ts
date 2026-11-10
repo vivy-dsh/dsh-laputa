@@ -444,6 +444,7 @@ export class RevisionStore {
     return this.withStateLock(() => {
       this.cleanupTempsUnlocked()
       const current = this.loadCurrent()
+      this.persistCandidateCommits(current)
       const base = current?.revision ?? null
       if (input.expectedBaseRevision !== base) {
         throw new PersonaError(
@@ -477,6 +478,38 @@ export class RevisionStore {
     })
   }
 
+  /** Publish reviewed, immutable proposal bytes without ever writing the editable draft. */
+  publishCandidate(input: PublishInput & { files: Readonly<Record<PersonaFile, Buffer>>; candidateId: string }): PublishResult {
+    return this.withStateLock(() => {
+      const current = this.loadCurrent()
+      this.persistCandidateCommits(current)
+      // Recover the owner commit after a crash before the candidate receipt was written.
+      const prior = this.candidateCommit(input.candidateId)
+      if (prior) return { current: prior, created: false }
+      if (current === null || input.expectedBaseRevision !== current.revision) {
+        throw new PersonaError('revision_conflict', 'proposal base revision is no longer current')
+      }
+      const draft = readPersonaDraft(this.binding, this.limits)
+      if (draft.digest !== input.expectedDraftDigest) {
+        throw new PersonaError('persona_file_changed', 'draft changed since proposal creation')
+      }
+      const assessment = assessPersona(input.files)
+      if (!assessment.initialized) throw new PersonaError('revision_not_initialized', 'proposal must preserve an initialized persona')
+      for (const name of ASSEMBLY_FILES) {
+        if ((input.files[name]?.length ?? 0) > this.limits.maxSourceBytes) {
+          throw new PersonaError('source_byte_budget_exceeded', `proposal file too large: ${name}`)
+        }
+      }
+      const assembled = assemblePersona(input.files, this.limits.maxPersonaChars)
+      const digest = digestPersonaFiles(input.files)
+      const created = this.createRevisionUnlocked({ files: input.files, digest, assembled }, current.revision, null,
+        { actor: 'panel', note: `candidate:${input.candidateId}` })
+      this.writePointer(created)
+      this.persistCandidateCommits(created)
+      return { current: created, created: true }
+    })
+  }
+
   /**
    * Restore an older revision as a new revision, then restore the draft to the
    * same content so the next publish cannot silently reintroduce the draft.
@@ -492,6 +525,7 @@ export class RevisionStore {
       if (current === null) {
         throw new PersonaError('revision_not_found', 'there is no current revision to roll back from')
       }
+      this.persistCandidateCommits(current)
       if (input.expectedBaseRevision !== current.revision) {
         throw new PersonaError(
           'revision_conflict',
@@ -598,6 +632,47 @@ export class RevisionStore {
     return this.revisionNumbers()
       .sort((left, right) => right - left)
       .slice(Math.max(0, retain - 1))
+      // Approved proposal revisions are permanent owner audit artifacts.
+      .filter(revision => !this.readRevision(revision).manifest.source?.note?.startsWith('candidate:'))
+  }
+
+  /** Resolve an actual committed proposal, excluding revisions orphaned before pointer publication. */
+  candidateCommit(id: string): LoadedRevision | null {
+    if (!/^[a-f0-9]{64}$/.test(id)) throw corrupt('invalid candidate id')
+    const receiptPath = join(this.stateDirectory, 'candidate-commits', `${id}.json`)
+    try {
+      const receipt = JSON.parse(safeRead(receiptPath, 4096, false).bytes.toString('utf8')) as { revision: number; contentDigest: string }
+      const revision = this.readRevision(receipt.revision)
+      if (revision.manifest.source?.note !== `candidate:${id}` || revision.manifest.contentDigest !== receipt.contentDigest) throw corrupt('candidate commit receipt mismatch')
+      return revision
+    } catch (error) {
+      if (!(error instanceof PersonaError && error.code === 'required_file_missing')) throw error
+    }
+    let cursor = this.loadCurrent()
+    while (cursor !== null) {
+      if (cursor.manifest.source?.note === `candidate:${id}`) return cursor
+      const parent = cursor.manifest.parent
+      if (parent === null || !this.revisionNumbers().includes(parent)) break
+      cursor = this.readRevision(parent)
+    }
+    return null
+  }
+
+  private persistCandidateCommits(current: LoadedRevision | null): void {
+    let cursor = current
+    while (cursor !== null) {
+      const note = cursor.manifest.source?.note
+      if (note?.startsWith('candidate:')) {
+        const id = note.slice('candidate:'.length)
+        if (!/^[a-f0-9]{64}$/.test(id)) throw corrupt('invalid candidate revision source')
+        const directory = join(this.stateDirectory, 'candidate-commits')
+        mkdirSync(directory, { recursive: true, mode: 0o700 })
+        writeJsonAtomic(join(directory, `${id}.json`), { revision: cursor.revision, contentDigest: cursor.manifest.contentDigest })
+      }
+      const parent = cursor.manifest.parent
+      if (parent === null || !this.revisionNumbers().includes(parent)) break
+      cursor = this.readRevision(parent)
+    }
   }
 
   /**
