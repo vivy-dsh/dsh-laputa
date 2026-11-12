@@ -13,7 +13,7 @@ function fixture() {
   const candidates = { stage: vi.fn(() => ({ candidateId: 'candidate-1' })), baseline: vi.fn(), status: vi.fn() }
   registerLaputaInternal({ webServer: {} }, candidates)
   const registration = transport.register.mock.calls[0]![1]
-  const body = { ticketId: 'ticket-1', subjectId: 'subject-1', files: { 'MISSION.MD': 'mission', 'IDENTITY.MD': 'reviewed' },
+  const body = { ticketId: 'ticket-1', subjectId: 'subject-1', requestId: 'request-1', files: { 'MISSION.MD': 'mission', 'IDENTITY.MD': 'reviewed' },
     expectedBaseRevision: 3, expectedDraftDigest: 'draft-digest', evidenceIds: ['event-1'], summary: 'Refine persona' }
   return { candidates, body, handle: registration.handle as (request: unknown) => Promise<unknown> }
 }
@@ -25,7 +25,7 @@ describe('production persona owner IPC authorization', () => {
     await expect(handle({ method: 'POST', path: '/candidates/stage', body: { ...body, filesDigest: 'caller-forgery' } })).resolves.toEqual({ candidateId: 'candidate-1' })
     const filesDigest = createHash('sha256').update(JSON.stringify({ 'IDENTITY.MD': 'reviewed', 'MISSION.MD': 'mission' })).digest('hex')
     expect(transport.call).toHaveBeenCalledExactlyOnceWith({ home: 'C:\\dream-test', name: 'evolution', path: '/dream/authorize', body: {
-      ticketId: 'ticket-1', subjectId: 'subject-1', scope: 'persona:stage', filesDigest,
+      ticketId: 'ticket-1', subjectId: 'subject-1', requestId: 'request-1', scope: 'persona:stage', filesDigest,
       expectedBaseRevision: 3, expectedDraftDigest: 'draft-digest', evidenceIds: ['event-1'], summary: 'Refine persona',
     } })
     expect(candidates.stage).toHaveBeenCalledOnce()

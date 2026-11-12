@@ -62,6 +62,7 @@ export type PersonaErrorCode =
   | 'persona_character_budget_exceeded'
   | 'unknown_persona_file'
   | 'persona_file_changed'
+  | 'persona_draft_stale'
   | 'revision_conflict'
   | 'revision_not_found'
   | 'revision_not_initialized'

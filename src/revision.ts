@@ -463,6 +463,7 @@ export class RevisionStore {
       if (current !== null && current.manifest.contentDigest === draft.digest) {
         return { current, created: false }
       }
+      this.assertDraftNotStale(draft.digest, current)
 
       const prune = this.retentionCandidates()
       this.verifyRetentionCandidates(prune)
@@ -490,7 +491,9 @@ export class RevisionStore {
         throw new PersonaError('revision_conflict', 'proposal base revision is no longer current')
       }
       const draft = readPersonaDraft(this.binding, this.limits)
-      if (draft.digest !== input.expectedDraftDigest) {
+      const candidateDigest = digestPersonaFiles(input.files)
+      // After an approval syncs the draft, a crash-recovery retry sees the candidate content, not the base.
+      if (draft.digest !== input.expectedDraftDigest && draft.digest !== candidateDigest) {
         throw new PersonaError('persona_file_changed', 'draft changed since proposal creation')
       }
       const assessment = assessPersona(input.files)
@@ -508,6 +511,16 @@ export class RevisionStore {
       this.persistCandidateCommits(created)
       return { current: created, created: true }
     })
+  }
+
+  /**
+   * A draft copied from an older revision must not silently become the next one:
+   * that is a rollback in disguise, and it skips the explicit version history.
+   */
+  private assertDraftNotStale(digest: string, current: LoadedRevision | null): void {
+    if (current === null || current.manifest.contentDigest === digest) return
+    const stale = this.list().find(item => item.contentDigest === digest && !item.current)
+    if (stale) throw new PersonaError('persona_draft_stale', `draft matches revision r${stale.revision}, not the current revision`)
   }
 
   /**

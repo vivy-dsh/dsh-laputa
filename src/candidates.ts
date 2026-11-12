@@ -2,7 +2,8 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { assemblePersona, digestPersonaFiles } from './assemble.ts'
-import { digestOf, withFileLock, writeJsonAtomic } from './atomic.ts'
+import { atomicWriteFile, digestOf, withFileLock, writeJsonAtomic } from './atomic.ts'
+import { ensurePersonaDirectory } from './binding.ts'
 import type { PersonaCache } from './cache.ts'
 import { ASSEMBLY_FILES, PersonaError, type PersonaFile } from './domain.ts'
 import { diffPersonaFiles } from './diff.ts'
@@ -21,6 +22,8 @@ interface Candidate {
 interface Decision {
   status: 'approved' | 'rejected'; decidedAt: string
   ownerRef?: { personaId: string; revision: number; contentDigest: string }
+  /** Whether the approved bytes also replaced the editable draft; false when a human edit was in the way. */
+  draftSynced?: boolean
 }
 const bytes = (files: Files): Record<PersonaFile, Buffer> => Object.fromEntries(
   ASSEMBLY_FILES.map(name => [name, Buffer.from(files[name], 'utf8')]),
@@ -144,10 +147,34 @@ export class PersonaCandidates {
         const result = revisions.publishCandidate({ candidateId: id, files: bytes(candidate.files),
           expectedBaseRevision: candidate.baseRevision, expectedDraftDigest: candidate.draftDigest })
         decision.ownerRef = { personaId: candidate.personaId, revision: result.current.revision, contentDigest: result.current.manifest.contentDigest }
+        // Keep the draft on the approved content when nobody edited it concurrently.
+        try { decision.draftSynced = this.syncDraft(candidate) } catch { decision.draftSynced = false }
         this.cache.reload()
       }
       writeJsonAtomic(this.path(id, '.decision.json'), decision)
       return this.status(id)
     })
+  }
+  /**
+   * Replace the editable draft with the approved bytes only when the draft still
+   * holds exactly what the proposal was based on (or already holds the proposal).
+   * A concurrent human edit wins; the reviewer is told the draft stayed stale.
+   */
+  private syncDraft(candidate: Candidate): boolean {
+    const draftDigest = this.cache.status().draftDigest
+    const approved = digestPersonaFiles(bytes(candidate.files))
+    if (draftDigest === approved) return true
+    if (draftDigest !== digestPersonaFiles(bytes(candidate.baseFiles))) return false
+    const directory = ensurePersonaDirectory(this.cache.binding)
+    try {
+      for (const name of ASSEMBLY_FILES) atomicWriteFile(join(directory, name), Buffer.from(candidate.files[name], 'utf8'), { mode: 0o600 })
+    } catch (error) {
+      // Each file write is atomic, the six together are not: put the base back before failing.
+      for (const name of ASSEMBLY_FILES) {
+        try { atomicWriteFile(join(directory, name), Buffer.from(candidate.baseFiles[name], 'utf8'), { mode: 0o600 }) } catch {}
+      }
+      throw error
+    }
+    return this.cache.status().draftDigest === approved
   }
 }

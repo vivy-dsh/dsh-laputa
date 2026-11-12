@@ -38,9 +38,11 @@ describe('immutable persona candidates', () => {
     expect(detail.evidenceIds).toEqual(['event-1', 'event-2'])
     expect(detail.diff.files.find(file => file.name === 'IDENTITY.MD')?.changed).toBe(true)
     const result = owner.decide(candidate.candidateId, candidate.candidateDigest, 'approve')
-    expect(result).toMatchObject({ status: 'approved', ownerRef: { personaId: 'vivy', revision: 2 } })
+    expect(result).toMatchObject({ status: 'approved', ownerRef: { personaId: 'vivy', revision: 2 }, draftSynced: true })
     expect(revisions.loadCurrent()?.files['IDENTITY.MD'].toString()).toBe('reviewed identity')
-    expect(readFileSync(join(directory, 'IDENTITY.MD'), 'utf8')).toBe('identity')
+    // The draft follows the approved content, so the next publish cannot revert the persona.
+    expect(readFileSync(join(directory, 'IDENTITY.MD'), 'utf8')).toBe('reviewed identity')
+    expect(cache.status().revisionPending).toBe(false)
     expect(session.revision).toBe(1)
     expect(cache.session({}).revision).toBe(2)
     expect(owner.decide(candidate.candidateId, candidate.candidateDigest, 'approve')).toEqual(result)
@@ -111,5 +113,31 @@ describe('immutable persona candidates', () => {
     }
     expect(owner.status(candidate.candidateId)).toMatchObject({ status: 'approved', ownerRef: { revision: 2 } })
     expect(revisions.readRevision(2).manifest.source?.note).toBe(`candidate:${candidate.candidateId}`)
+  })
+  it('does not overwrite a draft edited after a crashed approval', () => {
+    const { directory, owner, revisions, input } = fixture()
+    const candidate = owner.stage(input)
+    owner.decide(candidate.candidateId, candidate.candidateDigest, 'approve')
+    rmSync(join(owner.directory, `${candidate.candidateId}.decision.json`))
+    writeFileSync(join(directory, 'IDENTITY.MD'), 'late human edit')
+    const recovered = owner.decide(candidate.candidateId, candidate.candidateDigest, 'approve')
+    expect(recovered).toMatchObject({ status: 'approved', ownerRef: { revision: 2 } })
+    expect(readFileSync(join(directory, 'IDENTITY.MD'), 'utf8')).toBe('late human edit')
+    expect(revisions.count()).toBe(2)
+  })
+  it('refuses to publish a draft copied from an older revision', () => {
+    const { directory, owner, revisions, input } = fixture()
+    const candidate = owner.stage(input)
+    owner.decide(candidate.candidateId, candidate.candidateDigest, 'approve')
+    const previous = readFileSync(join(directory, 'IDENTITY.MD'), 'utf8')
+    writeFileSync(join(directory, 'IDENTITY.MD'), 'newer identity')
+    revisions.publish({ expectedBaseRevision: 2, expectedDraftDigest: owner.baseline().draftDigest })
+    writeFileSync(join(directory, 'IDENTITY.MD'), previous)
+    try {
+      revisions.publish({ expectedBaseRevision: 3, expectedDraftDigest: owner.baseline().draftDigest })
+      throw new Error('expected the stale draft to be refused')
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('persona_draft_stale')
+    }
   })
 })

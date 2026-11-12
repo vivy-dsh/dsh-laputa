@@ -138,6 +138,7 @@ function payload(cache: PersonaCache): { status: PersonaStatus; fileDetails: Fil
 function wireCode(error: PersonaError): string {
   switch (error.code) {
     case 'persona_file_changed': return 'FILE_CHANGED'
+    case 'persona_draft_stale': return 'DRAFT_STALE'
     case 'unknown_persona_file': return 'INVALID_NAME'
     case 'invalid_utf8': return 'INVALID_UTF8'
     case 'source_byte_budget_exceeded':
@@ -156,6 +157,7 @@ function errorStatus(error: PersonaError): number {
   switch (error.code) {
     case 'unknown_persona_file': return 400
     case 'persona_file_changed':
+    case 'persona_draft_stale':
     case 'revision_conflict': return 409
     case 'revision_not_found': return 404
     case 'revision_state_corrupt': return 500
@@ -168,6 +170,7 @@ function errorStatus(error: PersonaError): number {
 function errorHint(error: PersonaError): string {
   switch (error.code) {
     case 'persona_file_changed': return '重新加载文件后再保存'
+    case 'persona_draft_stale': return '草稿是旧版本内容：用「版本 → 回滚」恢复当前版本，或重新编辑后再发布'
     case 'revision_conflict': return '刷新版本状态后重试'
     case 'revision_not_initialized': return '补全 IDENTITY 与 MISSION 后重试'
     case 'revision_not_found': return '刷新历史后选择已存在的版本'

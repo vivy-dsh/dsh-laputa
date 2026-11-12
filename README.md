@@ -71,7 +71,11 @@ voice, memory, and mempalace, under the label **人格**.
 - **Publish draft** creates a new immutable revision from the draft. The
   request carries the expected base revision and draft digest; if either
   changed first, the panel reports a conflict and refreshes instead of
-  overwriting.
+  overwriting. A draft that equals an **older** revision is refused
+  (`persona_draft_stale`): use rollback instead, so the history shows what
+  happened. Approving a persona candidate syncs the draft to the approved
+  content when the draft still holds the proposal's base (a concurrent manual
+  edit is preserved and reported as `draftSynced: false`).
 - **History** lists immutable revisions newest first with `rN`, origin
   (`初始版本`, `发布基于 rN`, or `回滚自 rN`), creation time, and the current
   badge. Selecting a revision asks the server for its manifest and a bounded
@@ -89,11 +93,15 @@ voice, memory, and mempalace, under the label **人格**.
 - Blanking `IDENTITY.MD` or `MISSION.MD` is allowed after a confirmation. The
   draft returns to guided setup and cannot be published until refilled; the
   live revision and running sessions are unchanged.
-- **Settings → 人格 → 启用人格** enables or disables injection and guided setup.
+- **Settings → 人格与语气 → 启用人格** enables or disables injection and guided setup.
   The host config editor saves the choice and reloads the plugin. It survives
   restarts and takes effect on the next request; an in-progress response is
   unchanged. Files and revision history are retained. Switching personas still
   uses `npm run setup:laputa`.
+- The 人格与语气 settings section also declares the `settings.laputa.item` slot.
+  dsh-vivy-tone registers its 语气 editor there, so the page carries both halves
+  without either plugin importing the other; with that plugin absent the slot
+  renders nothing. The persona files remain the only persona source.
 - The API is loopback-only, same-origin, requires the DSH session check, and
   only accepts the six known file names. It never accepts a path.
 
@@ -236,6 +244,22 @@ Useful commands in a session:
 /laputa rollback <n>  # restore revision n as a new revision
 ```
 
+## 人格候选（提案）
+
+Owner-controlled proposals live in the candidate directory (`candidates/`), one
+content-addressed JSON per proposal, written by the Evolution/Dream hand-off.
+
+- `POST /candidate/decide` requires the loopback/session guards, JSON, the
+  reviewed `candidateDigest` and `confirm: true`. Nothing is published by any
+  other route.
+- Approval publishes the reviewed bytes through the same CAS as a draft publish
+  (`baseRevision` + draft digest) and writes the decision receipt afterwards; a
+  lost receipt is recovered from the owner commit, never by publishing twice.
+- One candidate has exactly one decision; re-submitting it is idempotent and
+  flipping it is refused.
+- After approval the panel shows the decision, the resulting `rN`, and whether
+  the draft was synced; a rejected candidate stays in the list for audit.
+
 ## Safety boundaries
 
 - Guided writes use a `0700` directory and `0600` files, same-directory temp
@@ -270,11 +294,13 @@ the panel and remove that entry. The persona files remain untouched.
 
 ## Not included yet
 
-Automatic proposals and rewrites, `SOUL.md` generation, consent/approval,
-profile switching from the panel, and cross-device sync are not part of the
-current implementation. Publishing, history, diffs, retention, and rollback
-are available in the panel; listing and rollback are also available through
-`/laputa revisions` and `/laputa rollback <n>`.
+Automatic proposals and rewrites, `SOUL.md` generation, profile switching from
+the panel, and cross-device sync are not part of the current implementation.
+Proposal review/approval is available in the panel
+(`人格 → 提案`): listing, source/diff review, approve-and-publish, reject, and
+history. Publishing, history, diffs, retention, and rollback are available in
+the panel; listing and rollback are also available through `/laputa revisions`
+and `/laputa rollback <n>`.
 
 ## License
 

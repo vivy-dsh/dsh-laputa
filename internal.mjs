@@ -13,7 +13,11 @@ async function authorizeStage(home, body) {
     Object.keys(body.files).sort().map(name => [name, body.files[name]]),
   ))).digest('hex')
   const authorization = await callComponent({ home, name: 'evolution', path: '/dream/authorize', body: {
-    ticketId: body.ticketId, subjectId: body.subjectId, scope: 'persona:stage', filesDigest,
+    ticketId: body.ticketId, subjectId: body.subjectId,
+    // A Ticket may own several Dream Inputs; without this binding Evolution authorizes
+    // against the first one and the frozen plan never matches.
+    ...(typeof body.requestId === 'string' && body.requestId ? { requestId: body.requestId } : {}),
+    scope: 'persona:stage', filesDigest,
     expectedBaseRevision: body.expectedBaseRevision, expectedDraftDigest: body.expectedDraftDigest,
     evidenceIds: body.evidenceIds, summary: body.summary,
   } })

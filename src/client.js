@@ -154,6 +154,7 @@ window.__ModuleLoader__.load({
       const [items, setItems] = useState(null)
       const [detail, setDetail] = useState(null)
       const [error, setError] = useState('')
+      const [notice, setNotice] = useState('')
       const [busy, setBusy] = useState(false)
       const [confirmed, setConfirmed] = useState(false)
       const refresh = async () => {
@@ -170,21 +171,29 @@ window.__ModuleLoader__.load({
         finally { setBusy(false) }
       }
       const decide = async action => {
-        setBusy(true); setError('')
+        setBusy(true); setError(''); setNotice('')
         try {
           const result = await api('/candidate/decide', { method: 'POST', body: JSON.stringify({
             candidateId: detail.candidateId, candidateDigest: detail.candidateDigest, action, confirm: true,
           }) })
           setDetail({ ...detail, ...result.candidate }); setConfirmed(false)
           setItems(items.map(item => item.candidateId === detail.candidateId ? result.candidate : item))
-        } catch (err) { setError(`${err.message}。当前人格或草稿可能已改变，请重新生成提案。`) }
+          if (action === 'approve' && result.candidate.draftSynced === false) {
+            setNotice('草稿里有未发布的人工编辑，本次没有覆盖；请手动同步，或用「版本 → 回滚」把草稿恢复成已发布版本。')
+          }
+        } catch (err) {
+          setError(err.code === 'DRAFT_STALE'
+            ? `${err.message}。请用「版本 → 回滚」恢复当前版本，或重新编辑草稿后再发布。`
+            : `${err.message}。当前人格或草稿可能已改变，请重新生成提案。`)
+        }
         finally { setBusy(false) }
       }
       return h('div', { className: 'lp-stack' },
         h('section', { className: 'lp-card' }, h('div', { className: 'lp-card-title' }, '人格进化提案',
           h('button', { className: 'lp-btn', disabled: busy, onClick: refresh }, '刷新')),
-        h('p', { className: 'lp-note' }, '审阅来源和差异后确认发布。发布保留现有草稿；已有会话继续使用原版本。'),
+        h('p', { className: 'lp-note' }, '审阅来源和差异后确认发布。批准后草稿会同步为已发布内容；若草稿里有人工编辑，则保留你的修改并提示。已有会话继续使用原版本。'),
         error ? h('p', { role: 'alert', className: 'lp-inline-error' }, error) : null,
+        notice ? h('p', { role: 'status', className: 'lp-note' }, notice) : null,
         items === null ? h('p', null, '正在加载…') : items.length === 0 ? h('p', { className: 'lp-empty' }, '暂无人格提案')
           : items.map(item => h('button', { key: item.candidateId, className: 'lp-history-row', disabled: busy, onClick: () => select(item) },
             h('span', null, `r${item.baseRevision}`), h('span', null, item.summary),
@@ -528,7 +537,7 @@ window.__ModuleLoader__.load({
         if (status === undefined) {
           initBody.push(h('p', { className: 'lp-empty', key: 'empty' }, '尚未读取到人格状态。'))
         } else if (!enabled) {
-          initBody.push(h('p', { className: 'lp-note', key: 'disabled' }, '插件当前未启用：内容仍可编辑，但保存后不会注入提示词。可在设置 → 人格中重新启用；切换人格使用 npm run setup:laputa。'))
+          initBody.push(h('p', { className: 'lp-note', key: 'disabled' }, '插件当前未启用：内容仍可编辑，但保存后不会注入提示词。可在设置 → 人格与语气中重新启用；切换人格使用 npm run setup:laputa。'))
         }
         if (status !== undefined && initialized) {
           initBody.push(h('p', { className: 'lp-note', key: 'ok' }, hasStore
@@ -780,7 +789,7 @@ window.__ModuleLoader__.load({
           notice ? h('div', { className: 'lp-toast', role: 'status' }, notice) : null))
     }
 
-    function PersonaSettings() {
+    function PersonaSettings(props) {
       const [enabled, setEnabled] = useState(undefined)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
@@ -833,7 +842,7 @@ window.__ModuleLoader__.load({
           .laputa-settings [role="alert"]{color:var(--dsw-alias-status-error, #b42318);margin-top:16px}
           .laputa-settings [role="status"]{margin-top:16px}
         `),
-        h('h2', null, '人格'),
+        h('h2', null, '人格与语气'),
         h('div', { className: 'laputa-settings-row' },
           h('div', null,
             h('span', { id: 'laputa-enabled-label', className: 'laputa-settings-label' }, '启用人格'),
@@ -843,14 +852,19 @@ window.__ModuleLoader__.load({
             'aria-checked': enabled === true, disabled: busy || enabled === undefined, onClick: toggle })),
         h('p', null, enabled === undefined ? '正在读取人格状态…' : '设置自动保存，重启后保留；下次请求生效，进行中的回复不受影响。'),
         error ? h('div', { role: 'alert' }, error, ' ', h('button', { type: 'button', onClick: enabled === undefined ? load : toggle, disabled: busy }, '重试')) : null,
-        notice ? h('p', { role: 'status' }, notice) : null)
+        notice ? h('p', { role: 'status' }, notice) : null,
+        // The tone editor belongs to dsh-vivy-tone; it registers into this
+        // declared slot, so this page composes 人格 + 语气 without either
+        // plugin importing the other.
+        typeof props?.renderSlot === 'function' ? props.renderSlot('settings.laputa.item', {}) : null)
     }
 
     return {
       inject: ['slots'],
       apply(ctx) {
         ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section', id: 'laputa', order: 6, label: () => '人格', inject: () => ({}),
+          name: 'settings.section', id: 'laputa', order: 6, label: () => '人格与语气', inject: () => ({}),
+          children: { 'settings.laputa.item': { kind: 'single', scope: 'root' } },
         }, PersonaSettings))
         ctx.slots.inject('main', () => ctx.slots.register(
           { name: 'main', key: 'laputa', inject: () => ({}) }, LaputaPanel,
